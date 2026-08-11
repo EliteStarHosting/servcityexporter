@@ -55,7 +55,7 @@ func TestPollFastHandlesDiscoveredResponseShapes(t *testing.T) {
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	client := servcity.NewClient(srv.URL, "test-key", 5*time.Second)
+	client := servcity.NewClient(srv.URL, "test-id", "test-secret", 5*time.Second)
 	st := store.New()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	p := New(client, st, log, time.Second, time.Second)

@@ -8,11 +8,28 @@ It polls your ServCity account on an interval and exposes the results on
 
 ## Quick start
 
+Get an API key/secret pair — run this yourself with your own ServCity
+login (email/password), it returns credentials this exporter uses, not
+your account password itself:
+
+```bash
+curl -X POST "https://servcity.org/uapi/user/loginapikey" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"your-servcity-password"}'
+# => {"id": "...", "secret": "...", "success": true}
+```
+
+(`loginapikey` creates an independent key without disturbing one already
+linked to your account; use `/user/login` instead only if you specifically
+want to reset an existing linked key.)
+
 ```bash
 docker run -d \
   --name servcityexporter \
+  --restart unless-stopped \
   -p 9420:9420 \
-  -e SERVCITY_API_KEY=your-api-key \
+  -e SERVCITY_API_KEY_ID='the "id" value' \
+  -e SERVCITY_API_KEY_SECRET='the "secret" value' \
   ghcr.io/elitestarhosting/servcityexporter:latest
 ```
 
@@ -25,10 +42,8 @@ scrape_configs:
       - targets: ["localhost:9420"]
 ```
 
-Get an API key from your ServCity account via `POST /user/loginapikey`
-(creates an independent key) or `POST /user/login` (**resets** any
-already-linked key) — see the
-[API docs](https://servcity.org/uapi/docs#/user).
+A ready-to-run exporter + Prometheus + Grafana stack is in
+[`deploy/`](deploy/).
 
 ## Configuration
 
@@ -36,7 +51,8 @@ All configuration is via environment variables.
 
 | Variable                      | Default                     | Description                                                              |
 | ------------------------------ | ---------------------------- | -------------------------------------------------------------------------- |
-| `SERVCITY_API_KEY`             | *(required)*                 | Your ServCity API key.                                                     |
+| `SERVCITY_API_KEY_ID`          | *(required)*                 | The `id` from `POST /user/loginapikey`. Used as the Basic-auth username.   |
+| `SERVCITY_API_KEY_SECRET`      | *(required)*                 | The `secret` from `POST /user/loginapikey`. Used as the Basic-auth password. |
 | `SERVCITY_API_BASE_URL`        | `https://servcity.org/uapi`  | API base URL.                                                              |
 | `SERVCITY_LISTEN_ADDR`         | `:9420`                      | Address the `/metrics` HTTP server binds to.                               |
 | `SERVCITY_POLL_INTERVAL`       | `30s`                        | How often per-IP DDoS data and tunnel counters are refreshed.              |
@@ -52,44 +68,62 @@ Other endpoints: `/healthz` (liveness) and `/` (index page).
 ## A note on the upstream API
 
 The [ServCity OpenAPI spec](https://servcity.org/uapi/swagger.yml) has a
-few gaps that shape how this exporter behaves:
+few gaps. Everything below was confirmed by running this exporter against
+a real account, not guessed:
 
 - **Auth.** The spec declares `type: basic` for its `apiKey` security
-  scheme. This exporter sends your key as the HTTP Basic-auth *username*
-  with an empty password. That hasn't been confirmed against ServCity's
-  actual behavior — if every request 401s, that's the first thing to
-  check (see `internal/servcity/client.go`).
-- **Undocumented response shapes, partially reverse-engineered.**
-  `IPMetrics` (`GET /ddos/metrics/{IP}`), `AttacksForIP`
-  (`GET /ddos/attacks/{IP}`), and `FWForIP` (`GET /ddos/firewall/{IP}`) are
-  `$ref`'d in the spec but never defined — the live Swagger UI's own
-  "Example Value" for these is the literal placeholder `"string"`. Their
-  shapes here come from ServCity's own DDoS Protection dashboard
-  (`prot.servcity.org`), whose Next.js frontend is public and
-  unauthenticated even though its data isn't: its JS bundle calls
-  `/api/traffic-metrics?ip=&hours=`, `/api/attacks?ip=`, and
-  `/api/firewall?ip=` — a backend-for-frontend that appears to thinly
-  proxy the corresponding `/ddos/*` endpoints on this same User API. That
-  bundle was fetched and read directly (no login required, since static JS
-  assets download regardless of session state) to recover the real field
-  names, e.g. the DDoS traffic categories shown on the dashboard's
-  "Traffic Analysis" graph (`passed`, `tcp_generic_drop`,
-  `udp_amplification_drop`, etc.) and the attack-record fields
-  (`attack_uuid`, `attack_start_time`, `attack_end_time`, `attack_peakbps`,
-  `attack_peakpps`).
+  scheme but doesn't say what goes in the username/password slots.
+  Confirmed: `POST /user/loginapikey` returns `{"id": ..., "secret": ...}`,
+  and the API expects `id` as the Basic-auth username and `secret` as the
+  password — not the secret alone in either slot.
+- **`IPMetrics`, `AttacksForIP`, `FWForIP` — undocumented in the spec,
+  reverse-engineered, then confirmed live.** These three are `$ref`'d in
+  the spec but never defined — the live Swagger UI's own "Example Value"
+  for them is the literal placeholder `"string"`. Their shapes were
+  recovered from ServCity's own DDoS Protection dashboard
+  (`prot.servcity.org`): its Next.js frontend is public and
+  unauthenticated even though its data isn't, so its JS bundle — which
+  calls `/api/traffic-metrics?ip=&hours=`, `/api/attacks?ip=`, and
+  `/api/firewall?ip=`, a backend-for-frontend proxying the corresponding
+  `/ddos/*` endpoints — was fetched and read directly (no login needed for
+  static assets) to recover the real field names. Then verified against
+  the actual `/ddos/*` endpoints with a live account: `graph_data`/
+  `metric_name`/`data`/`timestamp`/`value` for metrics, `attacks`/
+  `attack_uuid`/`attack_start_time`/`attack_end_time`/`attack_peakbps`/
+  `attack_peakpps` for attacks (newest-first), and `rules` for firewall —
+  all matched exactly. `internal/servcity/types.go` documents the
+  reasoning in full.
 
-  This is strong evidence, not a confirmed contract — the dashboard's BFF
-  could reshape the raw uapi response before the frontend ever sees it.
-  `internal/servcity/types.go` documents the reasoning in full. The
-  exporter tries to decode each response into the shape above first
-  (producing the metrics documented below); if a live account's response
-  doesn't match, it falls back to generic runtime field-discovery instead
-  of dropping the data (`servcity_ddos_metric_*` / `servcity_ddos_attacks_*`
-  / `servcity_ddos_firewall_*` with runtime-discovered field names — see
-  `internal/flatten`). Check a live `/metrics` output after your first
-  real deploy: if you see `servcity_ddos_traffic_*` series, the typed path
-  matched; if you see `servcity_ddos_metric_*` instead, the fallback fired
-  and the real shape differs from what's documented here.
+  The traffic-category names (`passed`, `tcp_generic_drop`,
+  `udp_amplification_drop`, etc. — see the Metrics section below) are the
+  real values a live account returns, confirmed against the exact same
+  "Traffic Analysis" graph ServCity's own dashboard renders. The exporter
+  still tries the confirmed shape first and falls back to generic runtime
+  field-discovery (`servcity_ddos_metric_*` / `servcity_ddos_attacks_*` /
+  `servcity_ddos_firewall_*`, see `internal/flatten`) if a response ever
+  doesn't match it — defensive, since ServCity could change this
+  undocumented shape without notice.
+- **`GET /ddos/attacks/{IP}` returns HTTP 401 for IPs with no attack
+  history**, with the same credentials that work fine on every other
+  endpoint (and other IPs on the same account). Confirmed against a live
+  36-IP account: exactly the IPs with zero recorded attacks got a 401
+  `{"message":"Unauthorized/Server Error"}`; every IP with real attack
+  history returned normally. The exporter treats this as a per-IP,
+  non-fatal error (counted in `servcity_exporter_scrape_errors_total`) and
+  does **not** let it flip the account-wide `servcity_up` gauge, since it's
+  not actually a credentials problem.
+- **Rate limiting / anti-bot challenge on bursts.** Polling many IPs at
+  once (confirmed with 36) can trigger ServCity's own proof-of-work
+  anti-bot layer — an HTTP 403 with a `"pow"` field in the body — on
+  `/ddos/config`, `/ddos/metrics`, and `/ddos/firewall`. The exporter
+  staggers per-IP requests (`requestStagger` in `internal/poller`) and
+  caps concurrency at 4 in-flight requests specifically to stay under
+  this; confirmed clean (zero errors besides the expected
+  no-attack-history 401s above) against the same 36-IP account. If you
+  have a much larger number of IPs and still see `servcity_ddos_config_*`
+  etc. missing along with `ddos_config`/`ddos_metrics`/`ddos_firewall`
+  errors in `servcity_exporter_scrape_errors_total`, raise
+  `SERVCITY_POLL_INTERVAL`.
 
 ## Metrics
 

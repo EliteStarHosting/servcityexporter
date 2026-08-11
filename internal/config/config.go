@@ -11,8 +11,12 @@ import (
 type Config struct {
 	// APIBaseURL is the ServCity API root, no trailing slash.
 	APIBaseURL string
-	// APIKey authenticates every request. Never logged.
-	APIKey string
+	// APIKeyID and APIKeySecret together authenticate every request (Basic
+	// auth: id as username, secret as password) - both come from the
+	// {"id": ..., "secret": ...} response of POST /user/loginapikey.
+	// Neither is ever logged.
+	APIKeyID     string
+	APIKeySecret string
 	// ListenAddr is the address the /metrics HTTP server binds to.
 	ListenAddr string
 	// RequestTimeout bounds a single HTTP call to the ServCity API.
@@ -29,13 +33,17 @@ type Config struct {
 // validates required fields.
 func Load() (Config, error) {
 	cfg := Config{
-		APIBaseURL: getEnv("SERVCITY_API_BASE_URL", "https://servcity.org/uapi"),
-		APIKey:     os.Getenv("SERVCITY_API_KEY"),
-		ListenAddr: getEnv("SERVCITY_LISTEN_ADDR", ":9420"),
+		APIBaseURL:   getEnv("SERVCITY_API_BASE_URL", "https://servcity.org/uapi"),
+		APIKeyID:     os.Getenv("SERVCITY_API_KEY_ID"),
+		APIKeySecret: os.Getenv("SERVCITY_API_KEY_SECRET"),
+		ListenAddr:   getEnv("SERVCITY_LISTEN_ADDR", ":9420"),
 	}
 
-	if cfg.APIKey == "" {
-		return Config{}, fmt.Errorf("SERVCITY_API_KEY is required")
+	if cfg.APIKeyID == "" {
+		return Config{}, fmt.Errorf("SERVCITY_API_KEY_ID is required")
+	}
+	if cfg.APIKeySecret == "" {
+		return Config{}, fmt.Errorf("SERVCITY_API_KEY_SECRET is required")
 	}
 
 	var err error

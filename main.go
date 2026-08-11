@@ -43,7 +43,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := servcity.NewClient(cfg.APIBaseURL, cfg.APIKey, cfg.RequestTimeout)
+	client := servcity.NewClient(cfg.APIBaseURL, cfg.APIKeyID, cfg.APIKeySecret, cfg.RequestTimeout)
 	st := store.New()
 	st.Set(store.Point{
 		Name:   "servcity_exporter_build_info",

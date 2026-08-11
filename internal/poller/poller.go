@@ -31,7 +31,15 @@ const maxFlattenDepth = 3
 
 // maxConcurrency bounds how many per-resource requests (one IP, one
 // Minecraft proxy) are in flight at once during a poll cycle.
-const maxConcurrency = 8
+const maxConcurrency = 4
+
+// requestStagger spaces out successive per-resource fan-out launches. A
+// live account with 36 authorized IPs tripped the ServCity API's own
+// proof-of-work anti-bot challenge (HTTP 403 with a "pow" field in the
+// response body) when polled at full concurrency with no stagger - this
+// keeps the burst rate low enough to avoid it without serializing the
+// whole poll cycle.
+const requestStagger = 150 * time.Millisecond
 
 // Poller owns the ServCity API client and metric store and drives both
 // poll loops.
@@ -110,20 +118,32 @@ func (p *Poller) pollSlow(ctx context.Context) {
 func (p *Poller) pollFast(ctx context.Context) {
 	p.pollTunnels(ctx)
 
-	ips := p.currentIPs()
+	p.fanOut(p.currentIPs(), func(ip string) {
+		p.pollIPConfig(ctx, ip)
+		p.pollIPMetrics(ctx, ip)
+		p.pollIPAttacks(ctx, ip)
+		p.pollIPFirewall(ctx, ip)
+	})
+}
+
+// fanOut runs worker(item) once per item, bounded to maxConcurrency
+// in-flight at a time and staggered by requestStagger between launches, to
+// keep the API request burst rate low enough to avoid ServCity's anti-bot
+// challenge (see requestStagger).
+func (p *Poller) fanOut(items []string, worker func(item string)) {
 	sem := make(chan struct{}, maxConcurrency)
 	var wg sync.WaitGroup
-	for _, ip := range ips {
-		ip := ip
+	for i, item := range items {
+		item := item
+		if i > 0 {
+			time.Sleep(requestStagger)
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
-			p.pollIPConfig(ctx, ip)
-			p.pollIPMetrics(ctx, ip)
-			p.pollIPAttacks(ctx, ip)
-			p.pollIPFirewall(ctx, ip)
+			worker(item)
 		}()
 	}
 	wg.Wait()
@@ -142,7 +162,7 @@ func (p *Poller) currentIPs() []string {
 func (p *Poller) pollAccountLimits(ctx context.Context) {
 	limits, err := p.client.GetAccountLimits(ctx)
 	if err != nil {
-		p.handleErr("account_limits", err)
+		p.handleErr("account_limits", err, true)
 		return
 	}
 	p.setUp(true)
@@ -155,7 +175,7 @@ func (p *Poller) pollAccountLimits(ctx context.Context) {
 func (p *Poller) pollAllowedIPs(ctx context.Context) {
 	ips, err := p.client.GetAllowedIPs(ctx)
 	if err != nil {
-		p.handleErr("ddos_allowed_ips", err)
+		p.handleErr("ddos_allowed_ips", err, true)
 		return
 	}
 	p.setUp(true)
@@ -181,7 +201,7 @@ func (p *Poller) pollAllowedIPs(ctx context.Context) {
 func (p *Poller) pollIPConfig(ctx context.Context, ip string) {
 	cfg, err := p.client.GetConfig(ctx, ip)
 	if err != nil {
-		p.handleErr("ddos_config", err)
+		p.handleErr("ddos_config", err, false)
 		return
 	}
 	labels := map[string]string{"ip": ip}
@@ -211,7 +231,7 @@ func (p *Poller) pollIPConfig(ctx context.Context, ip string) {
 func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 	raw, err := p.client.GetMetricsRaw(ctx, ip)
 	if err != nil {
-		p.handleErr("ddos_metrics", err)
+		p.handleErr("ddos_metrics", err, false)
 		return
 	}
 	labels := map[string]string{"ip": ip}
@@ -272,7 +292,7 @@ func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 	raw, err := p.client.GetAttacksRaw(ctx, ip)
 	if err != nil {
-		p.handleErr("ddos_attacks", err)
+		p.handleErr("ddos_attacks", err, false)
 		return
 	}
 	labels := map[string]string{"ip": ip}
@@ -341,7 +361,7 @@ func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 func (p *Poller) pollIPFirewall(ctx context.Context, ip string) {
 	raw, err := p.client.GetFirewallRaw(ctx, ip)
 	if err != nil {
-		p.handleErr("ddos_firewall", err)
+		p.handleErr("ddos_firewall", err, false)
 		return
 	}
 	labels := map[string]string{"ip": ip}
@@ -384,7 +404,7 @@ func (p *Poller) pollIPFirewall(ctx context.Context, ip string) {
 func (p *Poller) pollTunnels(ctx context.Context) {
 	tunnels, err := p.client.GetTunnels(ctx)
 	if err != nil {
-		p.handleErr("tunnels", err)
+		p.handleErr("tunnels", err, true)
 		return
 	}
 	p.setUp(true)
@@ -436,27 +456,19 @@ func (p *Poller) pollTunnels(ctx context.Context) {
 func (p *Poller) pollMinecraftProxies(ctx context.Context) {
 	ids, err := p.client.GetAllowedProxies(ctx)
 	if err != nil {
-		p.handleErr("minecraft_allowed_proxies", err)
+		p.handleErr("minecraft_allowed_proxies", err, true)
 		return
 	}
 	p.setUp(true)
 	p.store.Set(gaugePoint("servcity_minecraft_proxies_total", "Number of Minecraft proxies authorized on this account.", nil, float64(len(ids))))
 
 	current := make(map[string]bool, len(ids))
-	sem := make(chan struct{}, maxConcurrency)
-	var wg sync.WaitGroup
 	for _, id := range ids {
-		id := id
 		current[id] = true
-		wg.Add(1)
-		sem <- struct{}{}
-		go func() {
-			defer wg.Done()
-			defer func() { <-sem }()
-			p.pollProxy(ctx, id)
-		}()
 	}
-	wg.Wait()
+	p.fanOut(ids, func(id string) {
+		p.pollProxy(ctx, id)
+	})
 
 	p.store.DeleteWhere(func(pt store.Point) bool {
 		id, ok := pt.Labels["proxy_id"]
@@ -469,7 +481,7 @@ func (p *Poller) pollProxy(ctx context.Context, id string) {
 	points := make([]store.Point, 0, 4)
 
 	if conf, err := p.client.GetProxy(ctx, id); err != nil {
-		p.handleErr("minecraft_proxy", err)
+		p.handleErr("minecraft_proxy", err, false)
 	} else {
 		points = append(points, store.Point{
 			Name: "servcity_minecraft_proxy_info", Help: "Static info about a Minecraft proxy; value is always 1.",
@@ -479,7 +491,7 @@ func (p *Poller) pollProxy(ctx context.Context, id string) {
 	}
 
 	if ports, err := p.client.GetProxyPorts(ctx, id); err != nil {
-		p.handleErr("minecraft_proxy_ports", err)
+		p.handleErr("minecraft_proxy_ports", err, false)
 	} else {
 		points = append(points, gaugePoint("servcity_minecraft_proxy_java_port", "Java Edition listen port for this proxy.", labels, float64(ports.JavaPort)))
 		points = append(points, gaugePoint("servcity_minecraft_proxy_bedrock_port", "Bedrock Edition listen port for this proxy.", labels, float64(ports.BedrockPort)))
@@ -498,9 +510,19 @@ func (p *Poller) setUp(v bool) {
 	p.store.Set(gaugePoint("servcity_up", "1 if the last call to the ServCity API succeeded, 0 if authentication or connectivity failed.", nil, f))
 }
 
-func (p *Poller) handleErr(endpoint string, err error) {
+// handleErr records a failed poll. authCritical should be true only for
+// account-wide identity calls (account limits, allowed-IP list, tunnels,
+// Minecraft proxy list) - the ones that call setUp(true) on success. A 401
+// from those genuinely means the credentials are bad. Per-resource calls
+// (one IP's config/metrics/attacks/firewall, one proxy's detail) pass
+// false: a live account has been observed getting a real HTTP 401 from
+// GET /ddos/attacks/{IP} with credentials that work fine on every other
+// endpoint (apparently a backend quirk, likely for IPs with no attack
+// history yet) - letting that flip the global servcity_up gauge would make
+// it flap misleadingly for accounts that are actually fine.
+func (p *Poller) handleErr(endpoint string, err error, authCritical bool) {
 	var authErr *servcity.AuthError
-	if errors.As(err, &authErr) {
+	if authCritical && errors.As(err, &authErr) {
 		p.setUp(false)
 	}
 	n := p.incError(endpoint)

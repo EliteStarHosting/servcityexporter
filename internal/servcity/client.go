@@ -19,24 +19,26 @@ import (
 // Client talks to the ServCity User API over HTTP Basic auth.
 //
 // The upstream OpenAPI spec declares its "apiKey" security scheme as
-// `type: basic`, which is unusual for what's conceptually an API key. This
-// client sends the key as the Basic-auth username with an empty password.
-// That has not been confirmed against a live ServCity account — if
-// authentication fails with a 401 on every request, try swapping to
-// SetBasicAuth("", apiKey) here first before assuming the key itself is
-// wrong.
+// `type: basic` but doesn't say what goes in the username/password slots.
+// Confirmed against a live account: POST /user/loginapikey returns
+// {"id": "...", "secret": "..."} and the API expects the *id* as the
+// Basic-auth username and the *secret* as the password - not the secret
+// alone in either slot.
 type Client struct {
 	baseURL    string
-	apiKey     string
+	keyID      string
+	keySecret  string
 	httpClient *http.Client
 }
 
-// NewClient builds a Client. baseURL should not include a trailing slash
-// (e.g. "https://servcity.org/uapi").
-func NewClient(baseURL, apiKey string, timeout time.Duration) *Client {
+// NewClient builds a Client from the id/secret pair returned by
+// POST /user/loginapikey or /user/login. baseURL should not include a
+// trailing slash (e.g. "https://servcity.org/uapi").
+func NewClient(baseURL, keyID, keySecret string, timeout time.Duration) *Client {
 	return &Client{
-		baseURL: strings.TrimRight(baseURL, "/"),
-		apiKey:  apiKey,
+		baseURL:   strings.TrimRight(baseURL, "/"),
+		keyID:     keyID,
+		keySecret: keySecret,
 		httpClient: &http.Client{
 			Timeout: timeout,
 		},
@@ -48,7 +50,7 @@ func (c *Client) get(ctx context.Context, path string, out interface{}) error {
 	if err != nil {
 		return fmt.Errorf("build request for %s: %w", path, err)
 	}
-	req.SetBasicAuth(c.apiKey, "")
+	req.SetBasicAuth(c.keyID, c.keySecret)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.httpClient.Do(req)

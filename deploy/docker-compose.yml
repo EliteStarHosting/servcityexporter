@@ -3,7 +3,8 @@ services:
     image: ghcr.io/elitestarhosting/servcityexporter:latest
     restart: unless-stopped
     environment:
-      SERVCITY_API_KEY: ${SERVCITY_API_KEY:?set SERVCITY_API_KEY in .env}
+      SERVCITY_API_KEY_ID: ${SERVCITY_API_KEY_ID:?set SERVCITY_API_KEY_ID in .env}
+      SERVCITY_API_KEY_SECRET: ${SERVCITY_API_KEY_SECRET:?set SERVCITY_API_KEY_SECRET in .env}
     ports:
       - "9420:9420"
 
