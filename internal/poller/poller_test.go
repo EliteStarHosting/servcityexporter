@@ -36,7 +36,11 @@ func TestPollFastHandlesDiscoveredResponseShapes(t *testing.T) {
 		writeJSON(w, map[string]interface{}{
 			"graph_data": []map[string]interface{}{
 				{"metric_name": "passed", "data": []map[string]interface{}{{"timestamp": 1, "value": 42}}},
-				{"metric_name": "tcp_generic_drop", "data": []map[string]interface{}{{"timestamp": 1, "value": 7}}},
+				{"metric_name": "tcp_generic_drop", "data": []map[string]interface{}{
+					{"timestamp": 1, "value": 7},
+					{"timestamp": 2, "value": 99}, // spike the "latest" sample lands after, to prove max/min/avg aren't just the latest
+					{"timestamp": 3, "value": 3},
+				}},
 			},
 		})
 	})
@@ -69,7 +73,10 @@ func TestPollFastHandlesDiscoveredResponseShapes(t *testing.T) {
 	families := gather(t, st)
 
 	assertGaugeValue(t, families, "servcity_ddos_traffic_passed", map[string]string{"ip": "1.2.3.4"}, 42)
-	assertGaugeValue(t, families, "servcity_ddos_traffic_tcp_generic_drop", map[string]string{"ip": "1.2.3.4"}, 7)
+	assertGaugeValue(t, families, "servcity_ddos_traffic_tcp_generic_drop", map[string]string{"ip": "1.2.3.4"}, 3)
+	assertGaugeValue(t, families, "servcity_ddos_traffic_tcp_generic_drop_max", map[string]string{"ip": "1.2.3.4"}, 99)
+	assertGaugeValue(t, families, "servcity_ddos_traffic_tcp_generic_drop_min", map[string]string{"ip": "1.2.3.4"}, 3)
+	assertGaugeValue(t, families, "servcity_ddos_traffic_tcp_generic_drop_avg", map[string]string{"ip": "1.2.3.4"}, (7.0+99.0+3.0)/3.0)
 	assertGaugeValue(t, families, "servcity_ddos_attack_latest_active", map[string]string{"ip": "1.2.3.4"}, 1)
 	assertGaugeValue(t, families, "servcity_ddos_attack_latest_peak_bps", map[string]string{"ip": "1.2.3.4"}, 999)
 	assertGaugeValue(t, families, "servcity_ddos_firewall_rules", map[string]string{"ip": "1.2.3.4"}, 2)

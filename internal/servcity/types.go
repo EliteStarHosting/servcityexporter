@@ -167,6 +167,44 @@ type TrafficMetricsResponse struct {
 	GraphData []TrafficMetricSeries `json:"graph_data"`
 }
 
+// TrafficMetricStats summarizes a TrafficMetricSeries: the most recent
+// value, plus the min/max/average across every sample in the response
+// window (the last 6 hours, for the no-HOURS metrics endpoint this
+// exporter polls). The window is decoupled from how often the exporter
+// polls, so Max/Min surface short-lived spikes a single "latest value"
+// sample could land on either side of and miss entirely.
+type TrafficMetricStats struct {
+	Latest float64
+	Min    float64
+	Max    float64
+	Avg    float64
+}
+
+// Stats summarizes every sample in the series. ok is false for an empty
+// series.
+func (s TrafficMetricSeries) Stats() (TrafficMetricStats, bool) {
+	if len(s.Data) == 0 {
+		return TrafficMetricStats{}, false
+	}
+	latest, _ := s.Latest()
+	min, max, sum := s.Data[0].Value, s.Data[0].Value, 0.0
+	for _, p := range s.Data {
+		if p.Value < min {
+			min = p.Value
+		}
+		if p.Value > max {
+			max = p.Value
+		}
+		sum += p.Value
+	}
+	return TrafficMetricStats{
+		Latest: latest.Value,
+		Min:    min,
+		Max:    max,
+		Avg:    sum / float64(len(s.Data)),
+	}, true
+}
+
 // AttackSummary is one entry of AttacksForIP, the believed response shape
 // of GET /ddos/attacks/{IP}. The dashboard treats the first element of the
 // list as the most recent attack, and treats a zero/absent AttackEndTime

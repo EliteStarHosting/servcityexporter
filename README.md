@@ -43,7 +43,27 @@ scrape_configs:
 ```
 
 A ready-to-run exporter + Prometheus + Grafana stack is in
-[`deploy/`](deploy/).
+[`deploy/`](deploy/):
+
+```bash
+cd deploy
+cp .env.example .env   # fill in SERVCITY_API_KEY_ID / SERVCITY_API_KEY_SECRET
+docker compose up -d
+```
+
+Grafana (`http://localhost:3000`, default login `admin` / whatever you set
+`GRAFANA_ADMIN_PASSWORD` to) comes up with the Prometheus datasource and
+the [ServCity dashboard](deploy/grafana/dashboards/servcity-dashboard.json)
+already provisioned — no manual setup. Prefer to add it to an existing
+Grafana yourself instead: **Dashboards → Import**, upload
+`deploy/grafana/dashboards/servcity-dashboard.json`, point it at your
+Prometheus datasource.
+
+The dashboard has an `$ip` picker and covers: the traffic-category
+breakdown (the same graph as ServCity's own "Traffic Analysis" widget),
+a drop-rate gauge, per-category 6h peaks, attack status/history, DDoS
+config toggles, firewall rule count, tunnel throughput, and exporter
+health (scrape duration/errors, `servcity_up`).
 
 ## Configuration
 
@@ -141,6 +161,7 @@ a real account, not guessed:
 | `servcity_ddos_authorized_ips` | gauge | | Number of IPs authorized for DDoS protection. |
 | `servcity_ddos_config_<toggle>` | gauge | `ip` | One series per config boolean (e.g. `firewall_enable`, `learning_mode`, `strict`); 1=enabled. |
 | `servcity_ddos_traffic_<category>` | gauge | `ip` | Latest value for a DDoS traffic category, e.g. `passed`, `tcp_generic_drop`, `tcp_banned_drop`, `tcp_out_of_state_drop`, `udp_generic_drop`, `udp_banned_drop`, `udp_fragment_drop`, `udp_amplification_drop`, `l7_invalid_drop`, `other_drop` — the exact category set is whatever your account's API returns. Units unconfirmed. |
+| `servcity_ddos_traffic_<category>_max` / `_min` / `_avg` | gauge | `ip` | Min/max/average for that category across the *entire* response window (last 6h by default) — not just whatever value landed on a poll tick, so a spike between polls still shows up. |
 | `servcity_ddos_traffic_samples` | gauge | `ip`, `category` | Number of samples returned for a traffic category by the last `ddos/metrics` call. |
 | `servcity_ddos_attacks_total` | gauge | `ip` | Number of attack records in the last `ddos/attacks` response. |
 | `servcity_ddos_attack_latest_peak_bps` | gauge | `ip` | Peak bits/sec of the most recent attack. |

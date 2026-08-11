@@ -238,7 +238,7 @@ func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 
 	var tm servcity.TrafficMetricsResponse
 	if jsonErr := json.Unmarshal(raw, &tm); jsonErr == nil && len(tm.GraphData) > 0 {
-		points := make([]store.Point, 0, len(tm.GraphData)*2)
+		points := make([]store.Point, 0, len(tm.GraphData)*5)
 		for _, series := range tm.GraphData {
 			category := flatten.SanitizeMetricName(series.MetricName)
 			categoryLabels := map[string]string{"ip": ip, "category": category}
@@ -247,12 +247,29 @@ func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 				"Number of samples returned for a traffic category by the last ddos/metrics call.",
 				categoryLabels, float64(len(series.Data)),
 			))
-			if latest, ok := series.Latest(); ok {
-				points = append(points, gaugePoint(
-					"servcity_ddos_traffic_"+category,
-					"Latest observed value for the '"+category+"' DDoS traffic category on this IP (units unconfirmed against a live account - see README).",
-					labels, latest.Value,
-				))
+			if stats, ok := series.Stats(); ok {
+				points = append(points,
+					gaugePoint(
+						"servcity_ddos_traffic_"+category,
+						"Latest observed value for the '"+category+"' DDoS traffic category on this IP (units unconfirmed against a live account - see README).",
+						labels, stats.Latest,
+					),
+					gaugePoint(
+						"servcity_ddos_traffic_"+category+"_max",
+						"Highest value for the '"+category+"' DDoS traffic category across the whole response window (last 6h by default) - catches spikes a single latest-value sample could miss.",
+						labels, stats.Max,
+					),
+					gaugePoint(
+						"servcity_ddos_traffic_"+category+"_min",
+						"Lowest value for the '"+category+"' DDoS traffic category across the whole response window.",
+						labels, stats.Min,
+					),
+					gaugePoint(
+						"servcity_ddos_traffic_"+category+"_avg",
+						"Average value for the '"+category+"' DDoS traffic category across the whole response window.",
+						labels, stats.Avg,
+					),
+				)
 			}
 		}
 		p.replaceGroup("servcity_ddos_traffic_", labels, points)

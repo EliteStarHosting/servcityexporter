@@ -45,6 +45,40 @@ func TestTrafficMetricsResponseDecodesGraphData(t *testing.T) {
 	}
 }
 
+func TestTrafficMetricSeriesStats(t *testing.T) {
+	s := TrafficMetricSeries{
+		MetricName: "tcp_generic_drop",
+		Data: []TrafficMetricPoint{
+			{Timestamp: 100, Value: 10},
+			{Timestamp: 200, Value: 50}, // spike between polls a "latest only" metric would miss
+			{Timestamp: 300, Value: 20},
+		},
+	}
+	stats, ok := s.Stats()
+	if !ok {
+		t.Fatal("expected stats for non-empty series")
+	}
+	if stats.Latest != 20 {
+		t.Errorf("Latest = %v, want 20", stats.Latest)
+	}
+	if stats.Max != 50 {
+		t.Errorf("Max = %v, want 50", stats.Max)
+	}
+	if stats.Min != 10 {
+		t.Errorf("Min = %v, want 10", stats.Min)
+	}
+	if stats.Avg != (10.0+50.0+20.0)/3.0 {
+		t.Errorf("Avg = %v, want %v", stats.Avg, (10.0+50.0+20.0)/3.0)
+	}
+}
+
+func TestTrafficMetricSeriesStatsEmpty(t *testing.T) {
+	s := TrafficMetricSeries{MetricName: "passed"}
+	if _, ok := s.Stats(); ok {
+		t.Error("expected ok=false for an empty series")
+	}
+}
+
 func TestTrafficMetricSeriesLatestFallsBackWithoutTimestamps(t *testing.T) {
 	s := TrafficMetricSeries{
 		MetricName: "passed",

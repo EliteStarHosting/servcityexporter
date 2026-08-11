@@ -1,0 +1,358 @@
+{
+  "uid": "servcity-ddos",
+  "title": "ServCity DDoS Protection",
+  "description": "Traffic breakdown, attacks, config, tunnels, and firewall for a ServCity account, via github.com/elitestarhosting/servcityexporter",
+  "tags": ["servcity", "ddos", "prometheus"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {},
+        "hide": 0,
+        "label": "Prometheus"
+      },
+      {
+        "name": "ip",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": { "query": "label_values(servcity_ddos_traffic_passed, ip)", "refId": "ip" },
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "label": "IP"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Overview",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Exporter Up",
+      "gridPos": { "x": 0, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_up", "refId": "A", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "Up", "color": "green" }, "0": { "text": "Down", "color": "red" } } }
+          ],
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "textMode": "value_and_name", "colorMode": "background", "graphMode": "none", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Authorized IPs",
+      "gridPos": { "x": 4, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_authorized_ips", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Tunnels",
+      "gridPos": { "x": 8, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_tunnels_total", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Minecraft Proxies",
+      "gridPos": { "x": 12, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_minecraft_proxies_total", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Remaining Proxy Slots",
+      "gridPos": { "x": 16, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_account_remaining_proxies", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Scrape Errors (5m rate, all endpoints)",
+      "gridPos": { "x": 20, "y": 1, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "sum(rate(servcity_exporter_scrape_errors_total[5m]))", "refId": "A", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 0.1 }, { "color": "red", "value": 1 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Traffic Analysis — $ip",
+      "gridPos": { "x": 0, "y": 5, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "DDoS Traffic by Category — $ip",
+      "description": "Latest value per traffic category, sampled every poll (SERVCITY_POLL_INTERVAL). This is the same breakdown as ServCity's own dashboard Traffic Analysis graph.",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 10 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "{__name__=~\"servcity_ddos_traffic_passed|servcity_ddos_traffic_.*_drop\", ip=\"$ip\"}",
+          "legendFormat": "{{__name__}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "spanNulls": true, "pointSize": 3 }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_passed" }, "properties": [{ "id": "displayName", "value": "Passed" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_l7_invalid_drop" }, "properties": [{ "id": "displayName", "value": "L7 Invalid Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "purple" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_other_drop" }, "properties": [{ "id": "displayName", "value": "Other Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-pink" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_tcp_banned_drop" }, "properties": [{ "id": "displayName", "value": "TCP Banned Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_tcp_generic_drop" }, "properties": [{ "id": "displayName", "value": "TCP Generic Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "blue" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_tcp_out_of_state_drop" }, "properties": [{ "id": "displayName", "value": "TCP Out Of State Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "light-blue" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_udp_amplification_drop" }, "properties": [{ "id": "displayName", "value": "UDP Amplification Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_udp_banned_drop" }, "properties": [{ "id": "displayName", "value": "UDP Banned Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "semi-dark-blue" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_udp_fragment_drop" }, "properties": [{ "id": "displayName", "value": "UDP Fragment Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-orange" } }] },
+          { "matcher": { "id": "byName", "options": "servcity_ddos_traffic_udp_generic_drop" }, "properties": [{ "id": "displayName", "value": "UDP Generic Drop" }, { "id": "color", "value": { "mode": "fixed", "fixedColor": "dark-purple" } }] }
+        ]
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } }
+    },
+    {
+      "id": 12,
+      "type": "gauge",
+      "title": "Drop Rate — $ip",
+      "description": "Share of traffic dropped vs. passed, from the latest sample of each category.",
+      "gridPos": { "x": 0, "y": 16, "w": 6, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "100 * sum({__name__=~\"servcity_ddos_traffic_.*_drop\", ip=\"$ip\"}) / (sum({__name__=~\"servcity_ddos_traffic_.*_drop\", ip=\"$ip\"}) + sum(servcity_ddos_traffic_passed{ip=\"$ip\"}))",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "orange", "value": 5 }, { "color": "red", "value": 25 }] }
+        },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 13,
+      "type": "bargauge",
+      "title": "Peak per Category (response window, default last 6h) — $ip",
+      "description": "Max value observed per category across the full window the API returned, not just whatever landed on a poll tick.",
+      "gridPos": { "x": 6, "y": 16, "w": 18, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        {
+          "expr": "{__name__=~\"servcity_ddos_traffic_.*_max\", ip=\"$ip\"}",
+          "legendFormat": "{{__name__}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Attacks — $ip",
+      "gridPos": { "x": 0, "y": 23, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Attack Records",
+      "gridPos": { "x": 0, "y": 24, "w": 4, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_attacks_total{ip=\"$ip\"}", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Currently Under Attack",
+      "gridPos": { "x": 4, "y": 24, "w": 5, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_attack_latest_active{ip=\"$ip\"}", "refId": "A", "instant": true }],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "ONGOING", "color": "red" }, "0": { "text": "Clear", "color": "green" } } }
+          ]
+        },
+        "overrides": []
+      },
+      "options": { "textMode": "value", "colorMode": "background", "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Latest Attack Peak",
+      "gridPos": { "x": 9, "y": 24, "w": 5, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_attack_latest_peak_bps{ip=\"$ip\"}", "refId": "A", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "bps" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "Latest Attack Peak (pps)",
+      "gridPos": { "x": 14, "y": 24, "w": 5, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_attack_latest_peak_pps{ip=\"$ip\"}", "refId": "A", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "pps" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 25,
+      "type": "stat",
+      "title": "Latest Attack Started",
+      "gridPos": { "x": 19, "y": 24, "w": 5, "h": 4 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_attack_latest_start_timestamp_seconds{ip=\"$ip\"} * 1000", "refId": "A", "instant": true }],
+      "fieldConfig": { "defaults": { "unit": "dateTimeFromNow" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+
+    {
+      "id": 30,
+      "type": "row",
+      "title": "DDoS Config — $ip",
+      "gridPos": { "x": 0, "y": 28, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 31,
+      "type": "table",
+      "title": "Protection Toggles — $ip",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "{__name__=~\"servcity_ddos_config_.*\", ip=\"$ip\"}", "format": "table", "instant": true, "refId": "A" }
+      ],
+      "transformations": [
+        { "id": "organize", "options": { "excludeByName": { "Time": true, "ip": true }, "renameByName": { "__name__": "Setting", "Value": "Status" } } }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "Enabled", "color": "green" }, "0": { "text": "Disabled", "color": "text" } } }
+          ]
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Status" }, "properties": [{ "id": "custom.cellOptions", "value": { "type": "color-background" } }] }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+
+    {
+      "id": 40,
+      "type": "row",
+      "title": "Firewall & Tunnels",
+      "gridPos": { "x": 0, "y": 37, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 41,
+      "type": "stat",
+      "title": "Firewall Rules — $ip",
+      "gridPos": { "x": 0, "y": 38, "w": 6, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_ddos_firewall_rules{ip=\"$ip\"}", "refId": "A", "instant": true }],
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } }
+    },
+    {
+      "id": 42,
+      "type": "timeseries",
+      "title": "Tunnel Throughput",
+      "gridPos": { "x": 6, "y": 38, "w": 18, "h": 8 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [
+        { "expr": "rate(servcity_tunnel_receive_bytes_total[5m]) * 8", "legendFormat": "rx {{tunnel_id}}", "refId": "A" },
+        { "expr": "rate(servcity_tunnel_transmit_bytes_total[5m]) * 8", "legendFormat": "tx {{tunnel_id}}", "refId": "B" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } }
+    },
+
+    {
+      "id": 50,
+      "type": "row",
+      "title": "Exporter Health",
+      "gridPos": { "x": 0, "y": 46, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 51,
+      "type": "timeseries",
+      "title": "Poll Cycle Duration",
+      "gridPos": { "x": 0, "y": 47, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "servcity_exporter_scrape_duration_seconds", "legendFormat": "{{loop}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "s", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] }
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Scrape Errors by Endpoint (5m rate)",
+      "description": "ddos_attacks will show a steady baseline for IPs with no attack history - that's expected, not a real auth failure. See README.",
+      "gridPos": { "x": 12, "y": 47, "w": 12, "h": 7 },
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "targets": [{ "expr": "sum by (endpoint) (rate(servcity_exporter_scrape_errors_total[5m]))", "legendFormat": "{{endpoint}}", "refId": "A" }],
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] }
+    }
+  ]
+}
