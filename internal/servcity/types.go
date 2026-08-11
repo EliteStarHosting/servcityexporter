@@ -1,10 +1,25 @@
 package servcity
 
+import "encoding/json"
+
 // The types below mirror the ServCity User API's documented response
 // schemas (https://servcity.org/uapi/swagger.yml). Boolean config fields
 // use pointers so the collector can distinguish "field absent from this
 // account/response" from "field present and false" rather than silently
 // treating both as false.
+//
+// IPMetrics, AttacksForIP, and FWForIP (below) are NOT defined in that
+// spec - they're $ref'd but never given a schema. Their shapes here were
+// reverse-engineered from the ServCity DDoS Protection dashboard's public,
+// unauthenticated JS bundle (prot.servcity.org/_next/static/chunks/app/
+// dashboard/page-*.js), which calls its own backend-for-frontend at
+// /api/traffic-metrics, /api/attacks, and /api/firewall - each a thin
+// proxy in front of the corresponding /ddos/* endpoint on this same User
+// API. That's strong evidence for the real shape, but it's still once
+// removed from the raw uapi response: treat it as a well-informed best
+// guess, not a confirmed contract, and expect internal/poller's
+// generic-flattening fallback to kick in if a live account's raw response
+// doesn't decode into these structs.
 
 // AccountLimits is the response of GET /user/limits.
 type AccountLimits struct {
@@ -104,4 +119,79 @@ type ProxyConf struct {
 type ProxyPortConf struct {
 	BedrockPort int `json:"bedrockPort"`
 	JavaPort    int `json:"javaPort"`
+}
+
+// TrafficMetricPoint is one timestamped sample within a TrafficMetricSeries.
+type TrafficMetricPoint struct {
+	Timestamp float64 `json:"timestamp"`
+	Value     float64 `json:"value"`
+}
+
+// TrafficMetricSeries is one named traffic category (e.g. "passed",
+// "tcp_generic_drop", "udp_amplification_drop") with its samples over the
+// requested time window.
+type TrafficMetricSeries struct {
+	MetricName string               `json:"metric_name"`
+	Data       []TrafficMetricPoint `json:"data"`
+}
+
+// Latest returns the sample judged most recent: the one with the highest
+// Timestamp, or - if no sample carries a nonzero timestamp - the last
+// element, on the assumption the series is chronologically ordered.
+func (s TrafficMetricSeries) Latest() (TrafficMetricPoint, bool) {
+	if len(s.Data) == 0 {
+		return TrafficMetricPoint{}, false
+	}
+	hasTimestamp := false
+	for _, p := range s.Data {
+		if p.Timestamp != 0 {
+			hasTimestamp = true
+			break
+		}
+	}
+	if !hasTimestamp {
+		return s.Data[len(s.Data)-1], true
+	}
+	best := s.Data[0]
+	for _, p := range s.Data[1:] {
+		if p.Timestamp > best.Timestamp {
+			best = p
+		}
+	}
+	return best, true
+}
+
+// TrafficMetricsResponse is IPMetrics: the believed response shape of
+// GET /ddos/metrics/{IP} and GET /ddos/metrics/{IP}/{HOURS}.
+type TrafficMetricsResponse struct {
+	GraphData []TrafficMetricSeries `json:"graph_data"`
+}
+
+// AttackSummary is one entry of AttacksForIP, the believed response shape
+// of GET /ddos/attacks/{IP}. The dashboard treats the first element of the
+// list as the most recent attack, and treats a zero/absent AttackEndTime
+// as "attack still ongoing" (verbatim: `s.attack_end_time ? ... :
+// "Ongoing"` in its own UI code).
+type AttackSummary struct {
+	AttackUUID     string  `json:"attack_uuid"`
+	AttackTargetIP string  `json:"attack_target_ip"`
+	AttackType     string  `json:"attack_type"`
+	AttackStart    float64 `json:"attack_start_time"`
+	AttackEnd      float64 `json:"attack_end_time"`
+	PeakBps        float64 `json:"attack_peakbps"`
+	PeakPps        float64 `json:"attack_peakpps"`
+}
+
+// AttacksForIPResponse wraps the attack list.
+type AttacksForIPResponse struct {
+	Attacks []AttackSummary `json:"attacks"`
+}
+
+// FirewallRulesResponse is the believed response shape of
+// GET /ddos/firewall/{IP} (FWForIP). Individual rule fields aren't decoded
+// since the exporter only reports a rule count today; each element is kept
+// as raw JSON so a future caller can add fields without another round of
+// reverse-engineering.
+type FirewallRulesResponse struct {
+	Rules []json.RawMessage `json:"rules"`
 }

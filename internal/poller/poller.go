@@ -9,6 +9,7 @@ package poller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"strings"
@@ -200,11 +201,13 @@ func (p *Poller) pollIPConfig(ctx context.Context, ip string) {
 	p.store.SetAll(points)
 }
 
-// pollIPMetrics handles GET /ddos/metrics/{IP}. The response schema
-// (IPMetrics in the upstream spec) is not documented, so fields are
-// discovered at runtime: if the response is an array of samples, the most
-// recent one is flattened; if it's a single object, it's flattened
-// directly. See internal/flatten for the discovery logic.
+// pollIPMetrics handles GET /ddos/metrics/{IP}. It first tries the shape
+// reverse-engineered from the ServCity dashboard's own frontend (see
+// servcity.TrafficMetricsResponse): a set of named traffic categories
+// (e.g. "passed", "tcp_generic_drop", "udp_amplification_drop"), each with
+// a time series. If a live account's response doesn't decode into that
+// shape, falls back to generic field flattening so data isn't dropped
+// outright. See internal/flatten for the fallback's discovery logic.
 func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 	raw, err := p.client.GetMetricsRaw(ctx, ip)
 	if err != nil {
@@ -213,8 +216,33 @@ func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 	}
 	labels := map[string]string{"ip": ip}
 
-	sample := raw
-	if arr, ok := raw.([]interface{}); ok {
+	var tm servcity.TrafficMetricsResponse
+	if jsonErr := json.Unmarshal(raw, &tm); jsonErr == nil && len(tm.GraphData) > 0 {
+		points := make([]store.Point, 0, len(tm.GraphData)*2)
+		for _, series := range tm.GraphData {
+			category := flatten.SanitizeMetricName(series.MetricName)
+			categoryLabels := map[string]string{"ip": ip, "category": category}
+			points = append(points, gaugePoint(
+				"servcity_ddos_traffic_samples",
+				"Number of samples returned for a traffic category by the last ddos/metrics call.",
+				categoryLabels, float64(len(series.Data)),
+			))
+			if latest, ok := series.Latest(); ok {
+				points = append(points, gaugePoint(
+					"servcity_ddos_traffic_"+category,
+					"Latest observed value for the '"+category+"' DDoS traffic category on this IP (units unconfirmed against a live account - see README).",
+					labels, latest.Value,
+				))
+			}
+		}
+		p.replaceGroup("servcity_ddos_traffic_", labels, points)
+		return
+	}
+
+	var generic interface{}
+	_ = json.Unmarshal(raw, &generic)
+	sample := generic
+	if arr, ok := generic.([]interface{}); ok {
 		p.store.Set(gaugePoint("servcity_ddos_metrics_samples", "Number of samples returned by the last ddos/metrics call for this IP.", labels, float64(len(arr))))
 		sample = flatten.LatestByTime(arr)
 	}
@@ -227,17 +255,19 @@ func (p *Poller) pollIPMetrics(ctx context.Context, ip string) {
 	for name, val := range fields {
 		points = append(points, gaugePoint(
 			"servcity_ddos_metric_"+name,
-			"DDoS traffic metric '"+name+"' for this IP. Field discovered at runtime from an undocumented upstream schema; verify units against a live account.",
+			"DDoS traffic metric '"+name+"' for this IP. Field discovered at runtime because the response didn't match the expected traffic-category shape; verify against a live account.",
 			labels, val,
 		))
 	}
 	p.replaceGroup("servcity_ddos_metric_", labels, points)
 }
 
-// pollIPAttacks handles GET /ddos/attacks/{IP} (AttacksForIP, also
-// undocumented upstream). Only a count and the most recent record's fields
-// are exposed - per-attack detail requires GET /ddos/attacks/{IP}/{ID},
-// which isn't polled here to avoid an unbounded number of series as attack
+// pollIPAttacks handles GET /ddos/attacks/{IP}. It first tries the shape
+// reverse-engineered from the dashboard (servcity.AttacksForIPResponse: an
+// "attacks" list, newest first), falling back to generic flattening
+// otherwise. Only a count and the most recent record's fields are exposed
+// - per-attack traffic detail requires GET /ddos/attacks/{IP}/{ID}, which
+// isn't polled here to avoid an unbounded number of series as attack
 // history grows.
 func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 	raw, err := p.client.GetAttacksRaw(ctx, ip)
@@ -247,7 +277,34 @@ func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 	}
 	labels := map[string]string{"ip": ip}
 
-	if arr, ok := raw.([]interface{}); ok {
+	var af servcity.AttacksForIPResponse
+	if jsonErr := json.Unmarshal(raw, &af); jsonErr == nil && af.Attacks != nil {
+		p.store.Set(gaugePoint("servcity_ddos_attacks_total", "Number of attack records returned for this IP by the last ddos/attacks call.", labels, float64(len(af.Attacks))))
+
+		var points []store.Point
+		if len(af.Attacks) > 0 {
+			latest := af.Attacks[0]
+			active := 0.0
+			if latest.AttackEnd == 0 {
+				active = 1
+			}
+			points = []store.Point{
+				gaugePoint("servcity_ddos_attack_latest_peak_bps", "Peak bits/sec of the most recent attack on this IP.", labels, latest.PeakBps),
+				gaugePoint("servcity_ddos_attack_latest_peak_pps", "Peak packets/sec of the most recent attack on this IP.", labels, latest.PeakPps),
+				gaugePoint("servcity_ddos_attack_latest_start_timestamp_seconds", "Unix start time of the most recent attack on this IP.", labels, latest.AttackStart),
+				gaugePoint("servcity_ddos_attack_latest_active", "1 if the most recent attack on this IP has no recorded end time yet (still ongoing).", labels, active),
+			}
+			if latest.AttackEnd != 0 {
+				points = append(points, gaugePoint("servcity_ddos_attack_latest_end_timestamp_seconds", "Unix end time of the most recent attack on this IP.", labels, latest.AttackEnd))
+			}
+		}
+		p.replaceGroup("servcity_ddos_attack_latest_", labels, points)
+		return
+	}
+
+	var generic interface{}
+	_ = json.Unmarshal(raw, &generic)
+	if arr, ok := generic.([]interface{}); ok {
 		p.store.Set(gaugePoint("servcity_ddos_attacks_total", "Number of attack records returned for this IP by the last ddos/attacks call.", labels, float64(len(arr))))
 
 		var points []store.Point
@@ -257,7 +314,7 @@ func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 			for name, val := range fields {
 				points = append(points, gaugePoint(
 					"servcity_ddos_attack_latest_"+name,
-					"Field '"+name+"' of the most recent attack record for this IP. Discovered at runtime from an undocumented upstream schema.",
+					"Field '"+name+"' of the most recent attack record for this IP. Discovered at runtime because the response didn't match the expected attacks-list shape.",
 					labels, val,
 				))
 			}
@@ -266,21 +323,21 @@ func (p *Poller) pollIPAttacks(ctx context.Context, ip string) {
 		return
 	}
 
-	fields := flatten.Numeric(raw, maxFlattenDepth)
+	fields := flatten.Numeric(generic, maxFlattenDepth)
 	points := make([]store.Point, 0, len(fields))
 	for name, val := range fields {
 		points = append(points, gaugePoint(
 			"servcity_ddos_attacks_"+name,
-			"Field '"+name+"' from the ddos/attacks response for this IP. Discovered at runtime from an undocumented upstream schema.",
+			"Field '"+name+"' from the ddos/attacks response for this IP. Discovered at runtime because the response didn't match any expected shape.",
 			labels, val,
 		))
 	}
 	p.replaceGroup("servcity_ddos_attacks_", labels, points)
 }
 
-// pollIPFirewall handles GET /ddos/firewall/{IP} (FWForIP, undocumented
-// upstream). Reports a rule count when the shape allows finding one;
-// otherwise falls back to generic field flattening.
+// pollIPFirewall handles GET /ddos/firewall/{IP}. It first tries the shape
+// reverse-engineered from the dashboard (servcity.FirewallRulesResponse: a
+// "rules" list), falling back to generic field flattening otherwise.
 func (p *Poller) pollIPFirewall(ctx context.Context, ip string) {
 	raw, err := p.client.GetFirewallRaw(ctx, ip)
 	if err != nil {
@@ -289,12 +346,20 @@ func (p *Poller) pollIPFirewall(ctx context.Context, ip string) {
 	}
 	labels := map[string]string{"ip": ip}
 
-	if arr, ok := raw.([]interface{}); ok {
+	var fw servcity.FirewallRulesResponse
+	if jsonErr := json.Unmarshal(raw, &fw); jsonErr == nil && fw.Rules != nil {
+		p.store.Set(gaugePoint("servcity_ddos_firewall_rules", "Number of firewall rules returned for this IP.", labels, float64(len(fw.Rules))))
+		return
+	}
+
+	var generic interface{}
+	_ = json.Unmarshal(raw, &generic)
+	if arr, ok := generic.([]interface{}); ok {
 		p.store.Set(gaugePoint("servcity_ddos_firewall_rules", "Number of firewall rules returned for this IP.", labels, float64(len(arr))))
 		return
 	}
 
-	if obj, ok := raw.(map[string]interface{}); ok {
+	if obj, ok := generic.(map[string]interface{}); ok {
 		for _, v := range obj {
 			if arr, ok := v.([]interface{}); ok {
 				p.store.Set(gaugePoint("servcity_ddos_firewall_rules", "Number of firewall rules returned for this IP.", labels, float64(len(arr))))
@@ -306,7 +371,7 @@ func (p *Poller) pollIPFirewall(ctx context.Context, ip string) {
 		for name, val := range fields {
 			points = append(points, gaugePoint(
 				"servcity_ddos_firewall_"+name,
-				"Field '"+name+"' from the ddos/firewall response for this IP. Discovered at runtime from an undocumented upstream schema.",
+				"Field '"+name+"' from the ddos/firewall response for this IP. Discovered at runtime because the response didn't match any expected shape.",
 				labels, val,
 			))
 		}

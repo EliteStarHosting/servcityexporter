@@ -59,18 +59,37 @@ few gaps that shape how this exporter behaves:
   with an empty password. That hasn't been confirmed against ServCity's
   actual behavior — if every request 401s, that's the first thing to
   check (see `internal/servcity/client.go`).
-- **Undocumented response shapes.** `IPMetrics` (`GET /ddos/metrics/{IP}`),
-  `AttacksForIP` (`GET /ddos/attacks/{IP}`), and `FWForIP`
-  (`GET /ddos/firewall/{IP}`) are referenced in the spec but never
-  defined. Rather than guess field names, the exporter decodes these
-  responses generically at runtime: every numeric or boolean leaf becomes
-  its own metric, named from its JSON key path (see
-  `internal/flatten`). This means metric names under `servcity_ddos_metric_*`,
-  `servcity_ddos_attack_latest_*`, and `servcity_ddos_firewall_*` are
-  discovered from your account's actual API responses rather than
-  hard-coded — inspect a live `/metrics` output to see exactly what your
-  account returns, and treat units/semantics as unverified until you've
-  cross-checked them against the ServCity dashboard.
+- **Undocumented response shapes, partially reverse-engineered.**
+  `IPMetrics` (`GET /ddos/metrics/{IP}`), `AttacksForIP`
+  (`GET /ddos/attacks/{IP}`), and `FWForIP` (`GET /ddos/firewall/{IP}`) are
+  `$ref`'d in the spec but never defined — the live Swagger UI's own
+  "Example Value" for these is the literal placeholder `"string"`. Their
+  shapes here come from ServCity's own DDoS Protection dashboard
+  (`prot.servcity.org`), whose Next.js frontend is public and
+  unauthenticated even though its data isn't: its JS bundle calls
+  `/api/traffic-metrics?ip=&hours=`, `/api/attacks?ip=`, and
+  `/api/firewall?ip=` — a backend-for-frontend that appears to thinly
+  proxy the corresponding `/ddos/*` endpoints on this same User API. That
+  bundle was fetched and read directly (no login required, since static JS
+  assets download regardless of session state) to recover the real field
+  names, e.g. the DDoS traffic categories shown on the dashboard's
+  "Traffic Analysis" graph (`passed`, `tcp_generic_drop`,
+  `udp_amplification_drop`, etc.) and the attack-record fields
+  (`attack_uuid`, `attack_start_time`, `attack_end_time`, `attack_peakbps`,
+  `attack_peakpps`).
+
+  This is strong evidence, not a confirmed contract — the dashboard's BFF
+  could reshape the raw uapi response before the frontend ever sees it.
+  `internal/servcity/types.go` documents the reasoning in full. The
+  exporter tries to decode each response into the shape above first
+  (producing the metrics documented below); if a live account's response
+  doesn't match, it falls back to generic runtime field-discovery instead
+  of dropping the data (`servcity_ddos_metric_*` / `servcity_ddos_attacks_*`
+  / `servcity_ddos_firewall_*` with runtime-discovered field names — see
+  `internal/flatten`). Check a live `/metrics` output after your first
+  real deploy: if you see `servcity_ddos_traffic_*` series, the typed path
+  matched; if you see `servcity_ddos_metric_*` instead, the fallback fired
+  and the real shape differs from what's documented here.
 
 ## Metrics
 
@@ -87,11 +106,16 @@ few gaps that shape how this exporter behaves:
 | --- | --- | --- | --- |
 | `servcity_ddos_authorized_ips` | gauge | | Number of IPs authorized for DDoS protection. |
 | `servcity_ddos_config_<toggle>` | gauge | `ip` | One series per config boolean (e.g. `firewall_enable`, `learning_mode`, `strict`); 1=enabled. |
-| `servcity_ddos_metrics_samples` | gauge | `ip` | Number of samples in the last `ddos/metrics` response. |
-| `servcity_ddos_metric_<field>` | gauge | `ip` | Numeric field from the most recent metrics sample (runtime-discovered, see above). |
+| `servcity_ddos_traffic_<category>` | gauge | `ip` | Latest value for a DDoS traffic category, e.g. `passed`, `tcp_generic_drop`, `tcp_banned_drop`, `tcp_out_of_state_drop`, `udp_generic_drop`, `udp_banned_drop`, `udp_fragment_drop`, `udp_amplification_drop`, `l7_invalid_drop`, `other_drop` — the exact category set is whatever your account's API returns. Units unconfirmed. |
+| `servcity_ddos_traffic_samples` | gauge | `ip`, `category` | Number of samples returned for a traffic category by the last `ddos/metrics` call. |
 | `servcity_ddos_attacks_total` | gauge | `ip` | Number of attack records in the last `ddos/attacks` response. |
-| `servcity_ddos_attack_latest_<field>` | gauge | `ip` | Numeric field from the most recent attack record (runtime-discovered). |
+| `servcity_ddos_attack_latest_peak_bps` | gauge | `ip` | Peak bits/sec of the most recent attack. |
+| `servcity_ddos_attack_latest_peak_pps` | gauge | `ip` | Peak packets/sec of the most recent attack. |
+| `servcity_ddos_attack_latest_start_timestamp_seconds` | gauge | `ip` | Unix start time of the most recent attack. |
+| `servcity_ddos_attack_latest_end_timestamp_seconds` | gauge | `ip` | Unix end time of the most recent attack; absent if still ongoing. |
+| `servcity_ddos_attack_latest_active` | gauge | `ip` | 1 if the most recent attack has no recorded end time yet. |
 | `servcity_ddos_firewall_rules` | gauge | `ip` | Number of firewall rules for this IP. |
+| `servcity_ddos_metric_<field>` / `servcity_ddos_attacks_<field>` / `servcity_ddos_firewall_<field>` | gauge | `ip` | Fallback series, only present if a response didn't match the typed shapes above — runtime-discovered field names (see "A note on the upstream API"). |
 
 ### Tunnels
 

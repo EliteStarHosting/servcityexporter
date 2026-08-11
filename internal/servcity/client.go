@@ -114,36 +114,34 @@ func (c *Client) GetConfig(ctx context.Context, ip string) (*Config, error) {
 }
 
 // GetMetricsRaw calls GET /ddos/metrics/{IP}. The response shape
-// (IPMetrics) is not defined in the upstream spec, so it's returned as raw
-// decoded JSON for the caller to flatten defensively.
-func (c *Client) GetMetricsRaw(ctx context.Context, ip string) (interface{}, error) {
-	var out interface{}
-	if err := c.get(ctx, "/ddos/metrics/"+esc(ip), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+// (IPMetrics) is not defined in the upstream spec, so the raw JSON is
+// returned for the caller to decode - first attempting the shape believed
+// correct (see servcity.TrafficMetricsResponse), falling back to generic
+// flattening if that doesn't match.
+func (c *Client) GetMetricsRaw(ctx context.Context, ip string) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/ddos/metrics/"+esc(ip))
 }
 
 // GetAttacksRaw calls GET /ddos/attacks/{IP}. The response shape
-// (AttacksForIP) is not defined in the upstream spec; returned as raw
-// decoded JSON.
-func (c *Client) GetAttacksRaw(ctx context.Context, ip string) (interface{}, error) {
-	var out interface{}
-	if err := c.get(ctx, "/ddos/attacks/"+esc(ip), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
+// (AttacksForIP) is not defined in the upstream spec; see
+// servcity.AttacksForIPResponse for the believed shape.
+func (c *Client) GetAttacksRaw(ctx context.Context, ip string) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/ddos/attacks/"+esc(ip))
 }
 
 // GetFirewallRaw calls GET /ddos/firewall/{IP}. The response shape
-// (FWForIP) is not defined in the upstream spec; returned as raw decoded
-// JSON.
-func (c *Client) GetFirewallRaw(ctx context.Context, ip string) (interface{}, error) {
-	var out interface{}
-	if err := c.get(ctx, "/ddos/firewall/"+esc(ip), &out); err != nil {
+// (FWForIP) is not defined in the upstream spec; see
+// servcity.FirewallRulesResponse for the believed shape.
+func (c *Client) GetFirewallRaw(ctx context.Context, ip string) (json.RawMessage, error) {
+	return c.getRaw(ctx, "/ddos/firewall/"+esc(ip))
+}
+
+func (c *Client) getRaw(ctx context.Context, path string) (json.RawMessage, error) {
+	var raw json.RawMessage
+	if err := c.get(ctx, path, &raw); err != nil {
 		return nil, err
 	}
-	return out, nil
+	return raw, nil
 }
 
 // GetTunnels calls GET /tunnel.
