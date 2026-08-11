@@ -1,0 +1,35 @@
+services:
+  servcityexporter:
+    image: ghcr.io/elitestarhosting/servcityexporter:latest
+    restart: unless-stopped
+    environment:
+      SERVCITY_API_KEY: ${SERVCITY_API_KEY:?set SERVCITY_API_KEY in .env}
+    ports:
+      - "9420:9420"
+
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - servcityexporter
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+
+volumes:
+  prometheus-data:
+  grafana-data:
