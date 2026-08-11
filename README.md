@@ -38,9 +38,18 @@ Then point Prometheus at it:
 ```yaml
 scrape_configs:
   - job_name: servcity
+    scrape_interval: 5s   # optional; how often Prometheus reads /metrics.
+    scrape_timeout: 4s    # must be < scrape_interval.
     static_configs:
       - targets: ["localhost:9420"]
 ```
+
+This is independent of `SERVCITY_POLL_INTERVAL` (how often the *exporter*
+polls the ServCity API) — `/metrics` always serves from an in-memory
+cache, so Prometheus can scrape as fast as it wants regardless. Lowering
+`SERVCITY_POLL_INTERVAL` itself makes sense if you want fresher upstream
+data, but see the rate-limiting note below before going much under `10s`
+for an account with many authorized IPs.
 
 A ready-to-run exporter + Prometheus + Grafana stack is in
 [`deploy/`](deploy/):

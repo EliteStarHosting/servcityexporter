@@ -3,5 +3,13 @@ global:
 
 scrape_configs:
   - job_name: servcity
+    # How often Prometheus reads /metrics from the exporter. This is
+    # independent of SERVCITY_POLL_INTERVAL (how often the exporter itself
+    # polls the ServCity API) - /metrics always serves from an in-memory
+    # cache, so scraping fast here is cheap regardless of that setting. See
+    # the README ("A note on the upstream API") before lowering
+    # SERVCITY_POLL_INTERVAL for an account with many IPs.
+    scrape_interval: 5s
+    scrape_timeout: 4s
     static_configs:
       - targets: ["servcityexporter:9420"]

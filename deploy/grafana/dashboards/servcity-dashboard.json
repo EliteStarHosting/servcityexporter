@@ -9,7 +9,7 @@
   "editable": true,
   "graphTooltip": 1,
   "time": { "from": "now-6h", "to": "now" },
-  "refresh": "30s",
+  "refresh": "5s",
   "templating": {
     "list": [
       {
