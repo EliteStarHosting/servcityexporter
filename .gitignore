@@ -1,0 +1,6 @@
+/servcityexporter
+/servcityexporter.exe
+/dist/
+*.test
+*.out
+.env
