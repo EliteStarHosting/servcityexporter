@@ -134,8 +134,7 @@ a real account, not guessed:
   undocumented shape without notice.
 - **`GET /ddos/attacks/{IP}` returns HTTP 401 for IPs with no attack
   history**, with the same credentials that work fine on every other
-  endpoint (and other IPs on the same account). Confirmed against a live
-  36-IP account: exactly the IPs with zero recorded attacks got a 401
+  endpoint (and other IPs on the same account).
   `{"message":"Unauthorized/Server Error"}`; every IP with real attack
   history returned normally. The exporter treats this as a per-IP,
   non-fatal error (counted in `servcity_exporter_scrape_errors_total`) and
